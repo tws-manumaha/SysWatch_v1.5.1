@@ -2396,12 +2396,189 @@ Simple Monitoring. Smarter Operations.
 ## Installation (Linux)
 ```bash
 sudo bash install.sh
+# ----------------------------------------------------------------------
+# 13. GENERATE INSTALL.SH
+# ----------------------------------------------------------------------
+cat > install.sh <<'INSTALL_SH_END'
+#!/bin/bash
+set -e
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; NC='\033[0m'
+echo "========================================"
+echo "  SysWatch v1.2.0 Installation (Linux)  "
+echo "========================================"
+if [ "$EUID" -ne 0 ]; then echo -e "${RED}Please run as root.${NC}"; exit 1; fi
 
----
+if [ -f /etc/debian_version ]; then
+    OS="debian"; INSTALL_CMD="apt install -y"; UPDATE_CMD="apt update"; MYSQL_SERVICE="mysql"; NGINX_SERVICE="nginx"
+elif [ -f /etc/redhat-release ]; then
+    OS="redhat"; INSTALL_CMD="dnf install -y"; UPDATE_CMD="dnf check-update || true"; MYSQL_SERVICE="mysqld"; NGINX_SERVICE="nginx"
+else
+    echo -e "${RED}Unsupported OS.${NC}"; exit 1
+fi
 
-# PART 3 (Lines ~1601 – end)
+echo -e "\n${GREEN}Installing system packages...${NC}"
+$UPDATE_CMD
+$INSTALL_CMD python3 python3-pip python3-venv mysql-server nginx certbot python3-certbot-nginx openssl nmap
 
-```bash
+systemctl start $MYSQL_SERVICE
+systemctl enable $MYSQL_SERVICE
+
+echo -e "\n${GREEN}Configuration (press Enter to use defaults):${NC}"
+read -p "Database name [monitoring]: " DB_NAME; DB_NAME=${DB_NAME:-monitoring}
+read -p "Database user [monitor]: " DB_USER; DB_USER=${DB_USER:-monitor}
+read -s -p "Database password [monitor123]: " DB_PASSWORD; echo
+DB_PASSWORD=${DB_PASSWORD:-monitor123}
+read -s -p "Admin password [admin123]: " ADMIN_PASS; echo
+ADMIN_PASS=${ADMIN_PASS:-admin123}
+read -p "SMTP server (leave blank to skip): " SMTP_SERVER
+if [ -n "$SMTP_SERVER" ]; then
+    read -p "SMTP port [587]: " SMTP_PORT; SMTP_PORT=${SMTP_PORT:-587}
+    read -p "SMTP username: " SMTP_USER
+    read -s -p "SMTP password: " SMTP_PASSWORD; echo
+    read -p "Alert recipient email: " ALERT_EMAIL_TO
+else
+    SMTP_PORT=587; SMTP_USER=""; SMTP_PASSWORD=""; ALERT_EMAIL_TO=""
+fi
+read -p "Teams webhook (leave blank): " TEAMS_WEBHOOK
+read -p "Domain (e.g., syswatch.example.com) [$(hostname)]: " DOMAIN; DOMAIN=${DOMAIN:-$(hostname)}
+read -p "Discovery subnet [192.168.1.0/24]: " DISCOVERY_SUBNET; DISCOVERY_SUBNET=${DISCOVERY_SUBNET:-192.168.1.0/24}
+read -p "DeepSeek API key (leave blank): " DEEPSEEK_API_KEY
+read -p "Gemini API key (leave blank): " GEMINI_API_KEY
+read -p "LDAP server (leave blank): " LDAP_SERVER
+if [ -n "$LDAP_SERVER" ]; then
+    read -p "LDAP base DN: " LDAP_BASE_DN
+    read -p "LDAP user DN: " LDAP_USER_DN
+    read -p "LDAP bind user: " LDAP_BIND_USER
+    read -s -p "LDAP bind password: " LDAP_BIND_PASSWORD; echo
+    read -p "LDAP role mapping (e.g., CN=Admins:Admin): " LDAP_ROLE_MAPPING
+else
+    LDAP_BASE_DN=""; LDAP_USER_DN=""; LDAP_BIND_USER=""; LDAP_BIND_PASSWORD=""; LDAP_ROLE_MAPPING=""
+fi
+read -p "SSH user [syswatch]: " SSH_USER; SSH_USER=${SSH_USER:-syswatch}
+read -p "SSH private key path [/opt/syswatch/keys/syswatch_key]: " SSH_KEY_PATH; SSH_KEY_PATH=${SSH_KEY_PATH:-/opt/syswatch/keys/syswatch_key}
+read -p "WinRM user [syswatch]: " WINRM_USER; WINRM_USER=${WINRM_USER:-syswatch}
+read -s -p "WinRM password (leave blank): " WINRM_PASSWORD; echo
+
+echo -e "\n${GREEN}Setting up MySQL...${NC}"
+mysql -e "CREATE DATABASE IF NOT EXISTS $DB_NAME;"
+mysql -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASSWORD';"
+mysql -e "GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'localhost'; FLUSH PRIVILEGES;"
+
+PROJECT_DIR="/opt/syswatch"
+mkdir -p "$PROJECT_DIR"
+cp -r . "$PROJECT_DIR/"
+cd "$PROJECT_DIR"
+
+echo -e "\n${GREEN}Setting up Python...${NC}"
+python3 -m venv venv
+source venv/bin/activate
+pip install --upgrade pip
+pip install -r requirements.txt
+
+API_KEY=$(openssl rand -base64 32)
+SECRET_KEY=$(openssl rand -base64 32)
+cat > .env <<ENV_EOL
+SECRET_KEY=$SECRET_KEY
+DB_HOST=127.0.0.1
+DB_USER=$DB_USER
+DB_PASSWORD=$DB_PASSWORD
+DB_NAME=$DB_NAME
+API_KEY=$API_KEY
+ADMIN_USER=admin
+ADMIN_PASSWORD=$ADMIN_PASS
+SMTP_SERVER=$SMTP_SERVER
+SMTP_PORT=$SMTP_PORT
+SMTP_USER=$SMTP_USER
+SMTP_PASSWORD=$SMTP_PASSWORD
+ALERT_EMAIL_TO=$ALERT_EMAIL_TO
+TEAMS_WEBHOOK_URL=$TEAMS_WEBHOOK
+DISCOVERY_SUBNET=$DISCOVERY_SUBNET
+DEEPSEEK_API_KEY=$DEEPSEEK_API_KEY
+DEEPSEEK_API_URL=https://api.deepseek.com/v1/chat/completions
+DEEPSEEK_MODEL=deepseek-chat
+GEMINI_API_KEY=$GEMINI_API_KEY
+GEMINI_API_URL=https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent
+SSH_USER=$SSH_USER
+SSH_PRIVATE_KEY_PATH=$SSH_KEY_PATH
+SSH_TIMEOUT=10
+WINRM_USER=$WINRM_USER
+WINRM_PASSWORD=$WINRM_PASSWORD
+WINRM_USE_SSL=true
+WINRM_USE_KERBEROS=false
+LDAP_SERVER=$LDAP_SERVER
+LDAP_BASE_DN=$LDAP_BASE_DN
+LDAP_USER_DN=$LDAP_USER_DN
+LDAP_GROUP_DN=
+LDAP_BIND_USER=$LDAP_BIND_USER
+LDAP_BIND_PASSWORD=$LDAP_BIND_PASSWORD
+LDAP_ROLE_MAPPING=$LDAP_ROLE_MAPPING
+ENV_EOL
+
+echo -e "\n${GREEN}Initializing database...${NC}"
+python3 -c "from core.app import app; from core.database import init_db; with app.app_context(): init_db()"
+
+echo -e "\n${GREEN}Configuring Nginx...${NC}"
+NGINX_CONF="/etc/nginx/sites-available/$DOMAIN"
+cat > "$NGINX_CONF" <<NGINX_EOL
+server {
+    listen 80;
+    server_name $DOMAIN;
+    return 301 https://\$server_name\$request_uri;
+}
+server {
+    listen 443 ssl http2;
+    server_name $DOMAIN;
+    location / {
+        proxy_pass http://127.0.0.1:5000;
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+    }
+}
+NGINX_EOL
+ln -sf "$NGINX_CONF" /etc/nginx/sites-enabled/
+rm -f /etc/nginx/sites-enabled/default
+nginx -t && systemctl reload nginx
+
+read -p "Obtain Let's Encrypt SSL? (y/n) [y]: " DO_SSL
+if [[ "$DO_SSL" =~ ^[Yy]$ ]]; then
+    read -p "Email for Let's Encrypt: " LETSENCRYPT_EMAIL
+    if [ -n "$LETSENCRYPT_EMAIL" ]; then
+        certbot --nginx -d "$DOMAIN" --non-interactive --agree-tos --email "$LETSENCRYPT_EMAIL" || echo -e "${YELLOW}SSL failed.${NC}"
+    fi
+fi
+
+echo -e "\n${GREEN}Creating systemd service...${NC}"
+cat > /etc/systemd/system/syswatch.service <<SERVICE_EOL
+[Unit]
+Description=SysWatch v1.2.0
+After=network.target $MYSQL_SERVICE.service
+
+[Service]
+User=root
+WorkingDirectory=$PROJECT_DIR
+ExecStart=$PROJECT_DIR/venv/bin/gunicorn --workers 2 --bind 127.0.0.1:5000 wsgi:app
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
+SERVICE_EOL
+systemctl daemon-reload
+systemctl enable syswatch
+systemctl start syswatch
+
+echo -e "\n${GREEN}========================================${NC}"
+echo -e "${GREEN}✅ SysWatch v1.2.0 installed!${NC}"
+echo -e "URL: https://$DOMAIN"
+echo -e "Username: admin"
+echo -e "Password: $ADMIN_PASS"
+echo -e "API Key: $API_KEY"
+echo -e "========================================"
+INSTALL_SH_END
+chmod +x install.sh
+
 # ----------------------------------------------------------------------
 # 14. GENERATE INSTALL.PS1 (Windows installer)
 # ----------------------------------------------------------------------
