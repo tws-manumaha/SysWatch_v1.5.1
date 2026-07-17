@@ -1,19 +1,7 @@
 #!/bin/bash
 # ======================================================================
 # SysWatch v1.2.0 Complete Builder (Linux/macOS)
-# Generates the full project with all advanced features:
-# - Events UI with filters (login/logout/file changes)
-# - Granular RBAC (Admin/Operator/Viewer with permissions)
-# - LDAP (AD/Azure) + local fallback
-# - WinRM support (Kerberos) + dedicated Windows page
-# - Daily discovery sweep + admin-approved auto-deploy (SSH/WinRM)
-# - AI remediation (DeepSeek + Gemini fallback) with Dry-Run & Execute
-# - Remote command execution API and UI
-# - All scheduler jobs (anomaly, predictions, daily briefing, auto-resolve)
-#
-# Run: bash build_syswatch.sh
 # ======================================================================
-
 set -e
 
 echo "========================================"
@@ -25,55 +13,33 @@ mkdir -p "$TARGET_DIR"
 cd "$TARGET_DIR"
 
 # ----------------------------------------------------------------------
-# 1. Directory Structure
+# Directory Structure
 # ----------------------------------------------------------------------
-mkdir -p core
-mkdir -p modules/authentication
-mkdir -p modules/web_ui/templates modules/web_ui/static
-mkdir -p modules/api
-mkdir -p modules/monitoring_checks
-mkdir -p modules/alert_engine
-mkdir -p modules/ai
-mkdir -p modules/ldap
-mkdir -p modules/winrm
-mkdir -p modules/remote_exec
-mkdir -p modules/discovery
-mkdir -p modules/remediation
-mkdir -p agents
-mkdir -p scripts
-mkdir -p keys
+mkdir -p core modules/authentication modules/web_ui/templates modules/web_ui/static modules/api modules/monitoring_checks modules/alert_engine modules/ai modules/ldap modules/winrm modules/remote_exec modules/discovery modules/remediation agents scripts keys
 
 # ----------------------------------------------------------------------
 # 2. CORE FILES
 # ----------------------------------------------------------------------
-cat > core/__init__.py <<'EOF'
+cat > core/__init__.py <<'CORE_INIT_END'
 # core/__init__.py
-EOF
+CORE_INIT_END
 
-cat > core/config.py <<'EOF'
+cat > core/config.py <<'CONFIG_END'
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
 class Config:
-    # Flask
     SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-change-me")
-
-    # Database
     DB_HOST = os.getenv("DB_HOST", "127.0.0.1")
     DB_USER = os.getenv("DB_USER", "monitor")
     DB_PASSWORD = os.getenv("DB_PASSWORD", "")
     DB_NAME = os.getenv("DB_NAME", "monitoring")
-
-    # Security
     API_KEY = os.getenv("API_KEY", "change-me-api-key")
-
-    # Admin
     ADMIN_USER = os.getenv("ADMIN_USER", "admin")
     ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")
 
-    # SMTP
     SMTP_SERVER = os.getenv("SMTP_SERVER", "smtp.gmail.com")
     SMTP_PORT = int(os.getenv("SMTP_PORT", 587))
     SMTP_USER = os.getenv("SMTP_USER", "")
@@ -81,18 +47,14 @@ class Config:
     ALERT_EMAIL_TO = os.getenv("ALERT_EMAIL_TO", "")
     TEAMS_WEBHOOK_URL = os.getenv("TEAMS_WEBHOOK_URL", "")
 
-    # Discovery
     DISCOVERY_SUBNET = os.getenv("DISCOVERY_SUBNET", "192.168.1.0/24")
 
-    # AI – DeepSeek (primary)
     DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
     DEEPSEEK_API_URL = os.getenv("DEEPSEEK_API_URL", "https://api.deepseek.com/v1/chat/completions")
     DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
-    # Gemini (fallback)
     GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
     GEMINI_API_URL = os.getenv("GEMINI_API_URL", "https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent")
 
-    # SSH / WinRM
     SSH_USER = os.getenv("SSH_USER", "syswatch")
     SSH_PRIVATE_KEY_PATH = os.getenv("SSH_PRIVATE_KEY_PATH", "/opt/syswatch/keys/syswatch_key")
     SSH_TIMEOUT = int(os.getenv("SSH_TIMEOUT", 10))
@@ -101,7 +63,6 @@ class Config:
     WINRM_USE_SSL = os.getenv("WINRM_USE_SSL", "true").lower() == "true"
     WINRM_USE_KERBEROS = os.getenv("WINRM_USE_KERBEROS", "false").lower() == "true"
 
-    # LDAP
     LDAP_SERVER = os.getenv("LDAP_SERVER", "")
     LDAP_BASE_DN = os.getenv("LDAP_BASE_DN", "")
     LDAP_USER_DN = os.getenv("LDAP_USER_DN", "")
@@ -109,9 +70,9 @@ class Config:
     LDAP_BIND_USER = os.getenv("LDAP_BIND_USER", "")
     LDAP_BIND_PASSWORD = os.getenv("LDAP_BIND_PASSWORD", "")
     LDAP_ROLE_MAPPING = os.getenv("LDAP_ROLE_MAPPING", "")
-EOF
+CONFIG_END
 
-cat > core/database.py <<'EOF'
+cat > core/database.py <<'DATABASE_END'
 import pymysql
 from flask import g
 from werkzeug.security import generate_password_hash
@@ -145,7 +106,6 @@ def init_db():
     db = pymysql.connect(**db_config)
     cur = db.cursor()
 
-    # -------- TABLES FOR v1.2.0 --------
     cur.execute("""
         CREATE TABLE IF NOT EXISTS hosts (
             hostname VARCHAR(128) PRIMARY KEY,
@@ -317,12 +277,10 @@ def init_db():
         )
     """)
 
-    # Default network range
     cur.execute("SELECT COUNT(*) FROM network_ranges")
     if cur.fetchone()[0] == 0:
         cur.execute("INSERT INTO network_ranges (subnet, description) VALUES (%s, %s)", (Config.DISCOVERY_SUBNET, 'Default subnet'))
 
-    # Default permissions
     default_perms = [
         ('dashboard:view', 'View dashboard'),
         ('hosts:view', 'View hosts'),
@@ -341,7 +299,6 @@ def init_db():
     for name, desc in default_perms:
         cur.execute("INSERT IGNORE INTO permissions (name, description) VALUES (%s, %s)", (name, desc))
 
-    # Default groups and their permissions
     groups = {
         'Admin': [
             'dashboard:view','hosts:view','hosts:manage','hosts:deploy',
@@ -365,7 +322,6 @@ def init_db():
             pid = cur.fetchone()[0]
             cur.execute("INSERT IGNORE INTO group_permissions (group_id, permission_id) VALUES (%s, %s)", (gid, pid))
 
-    # Bootstrap admin user
     cur.execute("SELECT COUNT(*) FROM users")
     if cur.fetchone()[0] == 0:
         admin_user = Config.ADMIN_USER
@@ -376,7 +332,6 @@ def init_db():
         )
         db.commit()
 
-    # Default alert rules
     cur.execute("SELECT COUNT(*) FROM alert_rules")
     if cur.fetchone()[0] == 0:
         default_rules = [
@@ -397,9 +352,9 @@ def init_db():
 
     cur.close()
     db.close()
-EOF
+DATABASE_END
 
-cat > core/scheduler.py <<'EOF'
+cat > core/scheduler.py <<'SCHEDULER_END'
 from apscheduler.schedulers.background import BackgroundScheduler
 
 scheduler = BackgroundScheduler()
@@ -428,9 +383,9 @@ def shutdown_scheduler():
     if scheduler.running:
         scheduler.shutdown()
         print("🛑 Scheduler stopped.")
-EOF
+SCHEDULER_END
 
-cat > core/app.py <<'EOF'
+cat > core/app.py <<'APP_END'
 from flask import Flask
 from flask_login import LoginManager
 from core.config import Config
@@ -462,16 +417,16 @@ with app.app_context():
 start_scheduler(app)
 
 print("🚀 SysWatch v1.2.0 Core initialized.")
-EOF
+APP_END
 
 # ----------------------------------------------------------------------
 # 3. MODULES – AUTHENTICATION
 # ----------------------------------------------------------------------
-cat > modules/authentication/__init__.py <<'EOF'
+cat > modules/authentication/__init__.py <<'AUTH_INIT_END'
 # modules/authentication/__init__.py
-EOF
+AUTH_INIT_END
 
-cat > modules/authentication/models.py <<'EOF'
+cat > modules/authentication/models.py <<'AUTH_MODELS_END'
 from flask_login import UserMixin
 from core.database import get_db
 
@@ -509,9 +464,9 @@ def load_user(user_id):
     if row:
         return User(row[0], row[1], row[2], row[3])
     return None
-EOF
+AUTH_MODELS_END
 
-cat > modules/authentication/routes.py <<'EOF'
+cat > modules/authentication/routes.py <<'AUTH_ROUTES_END'
 from flask import Blueprint, request, jsonify, render_template, redirect, url_for, flash
 from flask_login import login_user, logout_user, login_required, current_user
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -543,11 +498,9 @@ def _ldap_authenticate(username, password):
         entry = conn.entries[0]
         user_dn_full = entry.entry_dn
 
-        # Bind as user to verify password
         user_conn = ldap3.Connection(server, user=user_dn_full, password=password, auto_bind=True)
         user_conn.unbind()
 
-        # Extract groups
         groups = []
         for member_of in entry.memberOf.values:
             groups.append(str(member_of))
@@ -579,7 +532,6 @@ def login():
         db = get_db()
         cur = db.cursor()
 
-        # 1. Try LDAP
         ldap_dn, ldap_roles = _ldap_authenticate(username, password)
         if ldap_dn:
             cur.execute("SELECT id, username, role, ldap_dn FROM users WHERE username = %s", (username,))
@@ -587,7 +539,6 @@ def login():
             if user_row:
                 user = User(user_row[0], user_row[1], user_row[2], user_row[3])
             else:
-                # Auto-create user
                 role = ldap_roles[0] if ldap_roles else 'Viewer'
                 cur.execute(
                     "INSERT INTO users (username, password_hash, role, ldap_dn) VALUES (%s, '', %s, %s)",
@@ -601,7 +552,6 @@ def login():
             cur.close()
             return redirect(url_for('web_ui.dashboard'))
 
-        # 2. Fallback to local DB
         cur.execute("SELECT id, username, password_hash, role, ldap_dn FROM users WHERE username = %s", (username,))
         row = cur.fetchone()
         cur.close()
@@ -670,16 +620,16 @@ def delete_user(user_id):
     db.commit()
     cur.close()
     return jsonify({"status": "ok"})
-EOF
+AUTH_ROUTES_END
 
 # ----------------------------------------------------------------------
 # 4. MODULES – WEB UI
 # ----------------------------------------------------------------------
-cat > modules/web_ui/__init__.py <<'EOF'
+cat > modules/web_ui/__init__.py <<'WEBUI_INIT_END'
 # modules/web_ui/__init__.py
-EOF
+WEBUI_INIT_END
 
-cat > modules/web_ui/routes.py <<'EOF'
+cat > modules/web_ui/routes.py <<'WEBUI_ROUTES_END'
 from flask import Blueprint, render_template
 from flask_login import login_required
 
@@ -689,10 +639,9 @@ bp = Blueprint('web_ui', __name__)
 @login_required
 def dashboard():
     return render_template('dashboard.html')
-EOF
+WEBUI_ROUTES_END
 
-# dashboard.html – full UI with all tabs
-cat > modules/web_ui/templates/dashboard.html <<'EOF'
+cat > modules/web_ui/templates/dashboard.html <<'DASHBOARD_HTML_END'
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -772,57 +721,385 @@ cat > modules/web_ui/templates/dashboard.html <<'EOF'
             </div>
         </div>
 
-        <!-- Dashboard -->
-        <div id="tab-dashboard" class="tab-content active">...</div>
-        <!-- Hosts -->
-        <div id="tab-monitoring" class="tab-content">...</div>
-        <!-- Events -->
-        <div id="tab-events" class="tab-content">...</div>
-        <!-- Alerts -->
-        <div id="tab-alerts" class="tab-content">...</div>
-        <!-- Windows -->
-        <div id="tab-windows" class="tab-content">...</div>
-        <!-- Rules -->
-        <div id="tab-rules" class="tab-content">...</div>
-        <!-- Admin -->
-        <div id="tab-admin" class="tab-content">...</div>
-        <!-- AI Insights -->
-        <div id="tab-ai" class="tab-content">...</div>
+        <div id="tab-dashboard" class="tab-content active">
+            <div class="summary-cards" id="summaryCards">
+                <div class="card"><h4>Total Hosts</h4><div class="value" id="totalHosts">-</div></div>
+                <div class="card"><h4>UP</h4><div class="value up" id="upHosts">-</div></div>
+                <div class="card"><h4>WARNING</h4><div class="value warning" id="warnHosts">-</div></div>
+                <div class="card"><h4>DOWN</h4><div class="value down" id="downHosts">-</div></div>
+                <div class="card"><h4>Open Alerts</h4><div class="value down" id="openAlerts">-</div></div>
+            </div>
+            <div class="filter-bar">
+                <label>Group: <select id="groupFilter"><option value="">All</option></select></label>
+                <label>Status: <select id="statusFilter"><option value="">All</option><option value="UP">UP</option><option value="WARNING">WARNING</option><option value="DOWN">DOWN</option></select></label>
+                <button onclick="fetchDevices()" class="btn">Refresh</button>
+            </div>
+            <table id="devicesTable"><thead><tr><th>Hostname</th><th>IP</th><th>Status</th><th>Group</th><th>OS</th><th>CPU%</th><th>Mem%</th><th>Disk%</th></tr></thead><tbody></tbody></table>
+            <div class="chart-box">
+                <div class="inline-form">
+                    <label>Range: <select id="trendRange" onchange="loadChart()"><option value="1h">1h</option><option value="6h">6h</option><option value="12h">12h</option><option value="24h">24h</option><option value="7d">7d</option><option value="30d">30d</option></select></label>
+                    <label>Metric: <select id="trendMetric" onchange="loadChart()"><option value="cpu">CPU</option><option value="memory">Memory</option><option value="disk">Disk</option></select></label>
+                    <label>Hosts: <select id="trendHosts" multiple size="2" onchange="loadChart()"></select></label>
+                    <button onclick="loadChart()" class="btn">Update</button>
+                </div>
+                <canvas id="trendChart"></canvas>
+            </div>
+        </div>
+
+        <div id="tab-monitoring" class="tab-content">
+            <h3>Hosts & Devices</h3>
+            <div style="background:var(--card-bg);padding:15px;border:1px solid var(--border);border-radius:8px;margin-bottom:15px;">
+                <h4>Add Host</h4>
+                <div class="inline-form">
+                    <input type="text" id="newHostname" placeholder="Hostname">
+                    <input type="text" id="newHostIP" placeholder="IP">
+                    <select id="newHostGroup"><option value="">No Group</option></select>
+                    <select id="newHostOS"><option value="linux">Linux</option><option value="windows">Windows</option></select>
+                    <button class="btn" onclick="addHost()">Add</button>
+                </div>
+                <div id="addHostMessage"></div>
+            </div>
+            <div style="background:var(--card-bg);padding:15px;border:1px solid var(--border);border-radius:8px;margin-bottom:15px;">
+                <h4>Auto-Discovery</h4>
+                <div class="inline-form">
+                    <button class="btn btn-success" onclick="startDiscovery()">Scan Network</button>
+                    <span id="discoveryStatus">Idle</span>
+                </div>
+                <div class="progress-bar"><div class="progress" id="discoveryProgress" style="width:0%;"></div></div>
+                <div id="discoveryMessage"></div>
+            </div>
+            <div class="filter-bar">
+                <label>Type: <select id="monitoringType"><option value="hosts">Hosts</option><option value="devices">Devices</option></select></label>
+                <button onclick="fetchMonitoring()" class="btn">Refresh</button>
+            </div>
+            <table id="monitoringTable"><thead><tr><th>Name</th><th>IP</th><th>Status</th><th>Type</th></tr></thead><tbody></tbody></table>
+        </div>
+
+        <div id="tab-events" class="tab-content">
+            <h3>Events</h3>
+            <div class="filter-bar">
+                <input type="text" id="eventHost" placeholder="Hostname">
+                <input type="text" id="eventUser" placeholder="Username">
+                <select id="eventType"><option value="">All</option><option value="login">Login</option><option value="logout">Logout</option><option value="file_change">File Change</option></select>
+                <input type="date" id="eventStart">
+                <input type="date" id="eventEnd">
+                <button onclick="fetchEvents()" class="btn">Filter</button>
+            </div>
+            <table id="eventsTable"><thead><tr><th>Time</th><th>Host</th><th>User</th><th>Type</th><th>Details</th></tr></thead><tbody></tbody></table>
+        </div>
+
+        <div id="tab-alerts" class="tab-content">
+            <h3>Alerts</h3>
+            <div class="filter-bar">
+                <select id="alertSeverity"><option value="">All</option><option value="WARNING">WARNING</option><option value="CRITICAL">CRITICAL</option></select>
+                <select id="alertStatus"><option value="">All</option><option value="OPEN">OPEN</option><option value="ACKNOWLEDGED">ACKNOWLEDGED</option><option value="RESOLVED">RESOLVED</option></select>
+                <button onclick="fetchAlerts()" class="btn">Refresh</button>
+            </div>
+            <table id="alertsTable"><thead><tr><th>Host</th><th>Metric</th><th>Value</th><th>Severity</th><th>Time</th><th>Status</th><th>Actions</th></tr></thead><tbody></tbody></table>
+        </div>
+
+        <div id="tab-windows" class="tab-content">
+            <h3>Windows Hosts</h3>
+            <table id="windowsTable"><thead><tr><th>Hostname</th><th>IP</th><th>Status</th><th>Action</th></tr></thead><tbody></tbody></table>
+            <div style="margin-top:20px;">
+                <h4>Execute Command</h4>
+                <div class="inline-form">
+                    <input type="text" id="winCommand" placeholder="Command (e.g., Get-Service)" style="width:400px;">
+                    <button onclick="execWinCommand()" class="btn">Run</button>
+                </div>
+                <pre id="winOutput" style="background:var(--card-bg);padding:10px;border:1px solid var(--border);border-radius:4px;margin-top:10px;"></pre>
+            </div>
+        </div>
+
+        <div id="tab-rules" class="tab-content">
+            <h3>Alert Rules</h3>
+            <div style="background:var(--card-bg);padding:15px;border:1px solid var(--border);border-radius:8px;margin-bottom:15px;">
+                <h4>Add Rule</h4>
+                <div class="inline-form">
+                    <input type="text" id="ruleHost" placeholder="Host (or %)" value="%">
+                    <input type="text" id="ruleMetric" placeholder="Metric">
+                    <input type="number" id="ruleThreshold" placeholder="Threshold">
+                    <select id="ruleOp"><option value=">">&gt;</option><option value="<">&lt;</option></select>
+                    <select id="ruleSev"><option value="WARNING">WARNING</option><option value="CRITICAL">CRITICAL</option></select>
+                    <button class="btn" onclick="createRule()">Add</button>
+                </div>
+            </div>
+            <table id="rulesTable"><thead><tr><th>ID</th><th>Host</th><th>Metric</th><th>Threshold</th><th>Severity</th><th>Enabled</th><th>Actions</th></tr></thead><tbody></tbody></table>
+        </div>
+
+        <div id="tab-admin" class="tab-content">
+            <h3>Admin</h3>
+            <div style="background:var(--card-bg);padding:15px;border:1px solid var(--border);border-radius:8px;margin-bottom:15px;">
+                <h4>Create User</h4>
+                <div class="inline-form">
+                    <input type="text" id="newUname" placeholder="Username">
+                    <input type="password" id="newPass" placeholder="Password">
+                    <select id="newRole"><option value="Viewer">Viewer</option><option value="Operator">Operator</option><option value="Admin">Admin</option></select>
+                    <button class="btn" onclick="createUser()">Create</button>
+                </div>
+            </div>
+            <table id="usersTable"><thead><tr><th>ID</th><th>Username</th><th>Role</th><th>LDAP</th><th>Actions</th></tr></thead><tbody></tbody></table>
+            <h3>Groups</h3>
+            <div class="inline-form"><input type="text" id="newGroupName" placeholder="Group name"><button class="btn" onclick="createGroup()">Create</button></div>
+            <table id="groupsTable"><thead><tr><th>ID</th><th>Name</th><th>Actions</th></tr></thead><tbody></tbody></table>
+        </div>
+
+        <div id="tab-ai" class="tab-content">
+            <h3>AI Insights & Predictions</h3>
+            <table id="aiTable"><thead><tr><th>Host</th><th>Metric</th><th>Value</th><th>Baseline</th><th>Deviation</th><th>Severity</th><th>Time</th><th>Details</th></tr></thead><tbody></tbody></table>
+        </div>
     </div>
+
     <script>
-        // Full JavaScript for all tabs (same as previous full version)
-        // ... (embedded in the actual script)
+        let trendChart = null;
+        function toggleDarkMode() { document.body.classList.toggle('dark'); }
+
+        document.querySelectorAll('#menu li[data-tab]').forEach(el => {
+            el.addEventListener('click', function() {
+                document.querySelectorAll('#menu li').forEach(l => l.classList.remove('active'));
+                this.classList.add('active');
+                const tab = this.dataset.tab;
+                document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+                document.getElementById('tab-' + tab).classList.add('active');
+                document.getElementById('pageTitle').innerText = this.innerText.trim();
+                if (tab === 'dashboard') { fetchSummary(); fetchDevices(); loadTrendHosts(); }
+                else if (tab === 'monitoring') { fetchMonitoring(); loadGroupsForAddHost(); }
+                else if (tab === 'events') { fetchEvents(); }
+                else if (tab === 'alerts') { fetchAlerts(); }
+                else if (tab === 'windows') { fetchWindows(); }
+                else if (tab === 'rules') { fetchRules(); }
+                else if (tab === 'admin') { loadAdmin(); }
+                else if (tab === 'ai') { fetchAI(); }
+            });
+        });
+
+        async function fetchSummary() {
+            const r = await fetch('/api/summary'); const d = await r.json();
+            document.getElementById('totalHosts').textContent = d.total; document.getElementById('upHosts').textContent = d.up;
+            document.getElementById('warnHosts').textContent = d.warning; document.getElementById('downHosts').textContent = d.down;
+            document.getElementById('openAlerts').textContent = d.open_alerts;
+        }
+        async function fetchDevices() {
+            const r = await fetch('/api/latest'); const data = await r.json();
+            const tbody = document.querySelector('#devicesTable tbody'); tbody.innerHTML = '';
+            data.forEach(d => {
+                tbody.innerHTML += `<tr><td>${d.hostname}</td><td>${d.ip}</td><td class="status-${d.status}">${d.status}</td><td>${d.group_name}</td><td>${d.os_type}</td><td>${d.cpu || 'N/A'}</td><td>${d.memory || 'N/A'}</td><td>${d.disk || 'N/A'}</td></tr>`;
+            });
+            await loadGroupFilterOptions();
+        }
+        async function loadGroupFilterOptions() {
+            const r = await fetch('/api/groups'); const g = await r.json();
+            const sel = document.getElementById('groupFilter'); sel.innerHTML = '<option value="">All</option>';
+            g.forEach(gr => sel.innerHTML += `<option value="${gr.id}">${gr.name}</option>`);
+        }
+        async function loadTrendHosts() {
+            const r = await fetch('/api/hosts'); const h = await r.json();
+            const sel = document.getElementById('trendHosts'); sel.innerHTML = '';
+            h.forEach(host => sel.innerHTML += `<option value="${host.hostname}">${host.hostname}</option>`);
+            if (sel.options.length > 0) { sel.options[0].selected = true; loadChart(); }
+        }
+        async function loadChart() {
+            const range = document.getElementById('trendRange').value;
+            const metric = document.getElementById('trendMetric').value;
+            const sel = document.getElementById('trendHosts');
+            const hosts = [];
+            for (let i=0; i<sel.options.length; i++) if (sel.options[i].selected) hosts.push(sel.options[i].value);
+            if (hosts.length === 0) return;
+            if (trendChart) trendChart.destroy();
+            const datasets = [];
+            const colors = ['#e74c3c','#3498db','#2ecc71','#f39c12','#9b59b6'];
+            for (let idx=0; idx<hosts.length; idx++) {
+                const resp = await fetch('/api/trends/' + hosts[idx] + '?range=' + range);
+                const data = await resp.json();
+                if (data.length === 0) continue;
+                datasets.push({
+                    label: hosts[idx] + ' (' + metric + ')',
+                    data: data.map(p => p[metric] || 0),
+                    borderColor: colors[idx % colors.length],
+                    fill: false, tension: 0.1, pointRadius: 1
+                });
+            }
+            if (datasets.length === 0) return;
+            trendChart = new Chart(document.getElementById('trendChart'), {
+                type: 'line',
+                data: { labels: datasets[0].data.map((_,i) => i), datasets: datasets },
+                options: { responsive: true, plugins: { zoom: { pan: { enabled: true, mode: 'x' }, zoom: { wheel: { enabled: true } } } } }
+            });
+        }
+
+        async function loadGroupsForAddHost() {
+            const r = await fetch('/api/groups'); const g = await r.json();
+            const sel = document.getElementById('newHostGroup'); sel.innerHTML = '<option value="">No Group</option>';
+            g.forEach(gr => sel.innerHTML += `<option value="${gr.id}">${gr.name}</option>`);
+        }
+        async function addHost() {
+            const hostname = document.getElementById('newHostname').value.trim();
+            const ip = document.getElementById('newHostIP').value.trim();
+            const group = document.getElementById('newHostGroup').value;
+            const os = document.getElementById('newHostOS').value;
+            if (!hostname || !ip) { alert('Hostname and IP required'); return; }
+            const r = await fetch('/api/hosts', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({hostname, ip, group_id: group||null, os_type: os}) });
+            const data = await r.json();
+            document.getElementById('addHostMessage').innerHTML = r.ok ? '<span style="color:green;">✅ Added</span>' : '<span style="color:red;">❌ ' + data.error + '</span>';
+            fetchMonitoring();
+        }
+        async function startDiscovery() {
+            await fetch('/api/discover/start', { method:'POST' });
+            document.getElementById('discoveryStatus').innerText = 'Running...';
+            const interval = setInterval(async () => {
+                const r = await fetch('/api/discover/status'); const d = await r.json();
+                document.getElementById('discoveryProgress').style.width = d.progress + '%';
+                document.getElementById('discoveryMessage').innerText = d.message;
+                if (!d.running) { clearInterval(interval); document.getElementById('discoveryStatus').innerText = 'Idle'; fetchMonitoring(); }
+            }, 1000);
+        }
+        async function fetchMonitoring() {
+            const r = await fetch('/api/hosts'); const data = await r.json();
+            const tbody = document.querySelector('#monitoringTable tbody'); tbody.innerHTML = '';
+            data.forEach(d => tbody.innerHTML += `<tr><td>${d.hostname}</td><td>${d.ip}</td><td class="status-${d.status}">${d.status}</td><td>Host (${d.os_type})</td></tr>`);
+        }
+
+        async function fetchEvents() {
+            const host = document.getElementById('eventHost').value;
+            const user = document.getElementById('eventUser').value;
+            const type = document.getElementById('eventType').value;
+            const start = document.getElementById('eventStart').value;
+            const end = document.getElementById('eventEnd').value;
+            let url = '/api/events?';
+            if (host) url += 'hostname=' + host + '&';
+            if (user) url += 'username=' + user + '&';
+            if (type) url += 'event_type=' + type + '&';
+            if (start) url += 'start=' + start + '&';
+            if (end) url += 'end=' + end + '&';
+            const r = await fetch(url); const data = await r.json();
+            const tbody = document.querySelector('#eventsTable tbody'); tbody.innerHTML = '';
+            data.forEach(e => tbody.innerHTML += `<tr><td>${e.event_time}</td><td>${e.hostname}</td><td>${e.user}</td><td>${e.event_type}</td><td>${e.details ? JSON.stringify(e.details) : ''}</td></tr>`);
+        }
+
+        async function fetchAlerts() {
+            const sev = document.getElementById('alertSeverity').value;
+            const status = document.getElementById('alertStatus').value;
+            let url = '/api/alerts?';
+            if (sev) url += 'severity=' + sev + '&';
+            if (status) url += 'status=' + status + '&';
+            const r = await fetch(url); const data = await r.json();
+            const tbody = document.querySelector('#alertsTable tbody'); tbody.innerHTML = '';
+            data.forEach(a => {
+                let actions = `<button class="btn btn-sm btn-info" onclick="ackAlert(${a.id})">Ack</button>`;
+                if (a.status === 'OPEN') actions += ` <button class="btn btn-sm btn-warning" onclick="suggest(${a.id})">Suggest</button>`;
+                tbody.innerHTML += `<tr><td>${a.hostname}</td><td>${a.metric}</td><td>${a.value}</td><td>${a.severity}</td><td>${a.timestamp}</td><td class="status-${a.status}">${a.status}</td><td>${actions}</td></tr>`;
+            });
+        }
+        async function ackAlert(id) { await fetch('/api/alerts/' + id + '/acknowledge', { method:'POST' }); fetchAlerts(); }
+        async function suggest(id) { await fetch('/api/alerts/' + id + '/suggest', { method:'POST' }); fetchAlerts(); }
+
+        async function fetchWindows() {
+            const r = await fetch('/api/winrm/hosts'); const data = await r.json();
+            const tbody = document.querySelector('#windowsTable tbody'); tbody.innerHTML = '';
+            data.forEach(h => tbody.innerHTML += `<tr><td>${h.hostname}</td><td>${h.ip}</td><td class="status-${h.status}">${h.status}</td><td><button class="btn btn-sm btn-primary" onclick="execWinHost('${h.hostname}')">Exec</button></td></tr>`);
+        }
+        async function execWinCommand() {
+            const cmd = document.getElementById('winCommand').value;
+            const host = prompt('Enter Windows hostname:');
+            if (!host || !cmd) return;
+            const r = await fetch('/api/winrm/' + host + '/exec', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({command: cmd}) });
+            const d = await r.json();
+            document.getElementById('winOutput').innerText = d.output || d.error || 'Done.';
+        }
+        async function execWinHost(host) {
+            const cmd = prompt('Enter command for ' + host + ':');
+            if (!cmd) return;
+            const r = await fetch('/api/winrm/' + host + '/exec', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({command: cmd}) });
+            const d = await r.json();
+            alert(d.output || d.error || 'Done.');
+        }
+
+        async function fetchRules() {
+            const r = await fetch('/api/rules'); const data = await r.json();
+            const tbody = document.querySelector('#rulesTable tbody'); tbody.innerHTML = '';
+            data.forEach(rule => tbody.innerHTML += `<tr><td>${rule.id}</td><td>${rule.hostname}</td><td>${rule.metric}</td><td>${rule.threshold}</td><td>${rule.severity}</td><td>${rule.enabled ? '✅' : '❌'}</td><td><button class="btn btn-sm btn-warning" onclick="toggleRule(${rule.id})">Toggle</button> <button class="btn btn-sm btn-danger" onclick="delRule(${rule.id})">Del</button></td></tr>`);
+        }
+        async function createRule() {
+            const data = {
+                hostname: document.getElementById('ruleHost').value,
+                metric: document.getElementById('ruleMetric').value,
+                threshold: parseFloat(document.getElementById('ruleThreshold').value) || 0,
+                operator: document.getElementById('ruleOp').value,
+                severity: document.getElementById('ruleSev').value,
+                cooldown: 300
+            };
+            await fetch('/api/rules', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(data) });
+            fetchRules();
+        }
+        async function toggleRule(id) { await fetch('/api/rules/' + id + '/toggle', { method:'POST' }); fetchRules(); }
+        async function delRule(id) { if (confirm('Delete?')) { await fetch('/api/rules/' + id, { method:'DELETE' }); fetchRules(); } }
+
+        async function loadAdmin() {
+            const r = await fetch('/api/users'); const users = await r.json();
+            const tbody = document.querySelector('#usersTable tbody'); tbody.innerHTML = '';
+            users.forEach(u => tbody.innerHTML += `<tr><td>${u.id}</td><td>${u.username}</td><td>${u.role}</td><td>${u.ldap ? 'Yes' : 'No'}</td><td><button class="btn btn-sm btn-danger" onclick="delUser(${u.id})">Del</button></td></tr>`);
+            const gr = await fetch('/api/groups'); const groups = await gr.json();
+            const gt = document.querySelector('#groupsTable tbody'); gt.innerHTML = '';
+            groups.forEach(g => gt.innerHTML += `<tr><td>${g.id}</td><td>${g.name}</td><td><button class="btn btn-sm btn-danger" onclick="delGroup(${g.id})">Del</button></td></tr>`);
+        }
+        async function createUser() {
+            const username = document.getElementById('newUname').value;
+            const password = document.getElementById('newPass').value;
+            const role = document.getElementById('newRole').value;
+            await fetch('/api/users', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({username, password, role}) });
+            loadAdmin();
+        }
+        async function delUser(id) { if (confirm('Delete?')) { await fetch('/api/users/' + id, { method:'DELETE' }); loadAdmin(); } }
+        async function createGroup() {
+            const name = document.getElementById('newGroupName').value;
+            await fetch('/api/groups', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({name}) });
+            loadAdmin();
+        }
+        async function delGroup(id) { if (confirm('Delete?')) { await fetch('/api/groups/' + id, { method:'DELETE' }); loadAdmin(); } }
+
+        async function fetchAI() {
+            const r = await fetch('/api/ai_insights'); const data = await r.json();
+            const tbody = document.querySelector('#aiTable tbody'); tbody.innerHTML = '';
+            data.forEach(item => {
+                let details = '';
+                if (item.details) {
+                    try { const d = JSON.parse(item.details); details = d.days_remaining ? 'Full in ' + d.days_remaining.toFixed(1) + ' days' : d.slope ? 'Slope: ' + d.slope.toFixed(3) : ''; } catch(e) {}
+                }
+                tbody.innerHTML += `<tr><td>${item.hostname}</td><td>${item.metric}</td><td>${item.current_value}</td><td>${item.baseline_mean.toFixed(2)}±${item.baseline_std.toFixed(2)}</td><td>${item.deviation.toFixed(2)}</td><td class="status-${item.severity}">${item.severity}</td><td>${item.timestamp}</td><td>${details}</td></tr>`;
+            });
+        }
+
+        fetchSummary(); fetchDevices(); loadTrendHosts(); fetchMonitoring(); fetchEvents(); fetchAlerts(); fetchWindows(); fetchRules(); loadAdmin(); fetchAI();
+        setInterval(() => { if (document.getElementById('tab-dashboard').classList.contains('active')) { fetchDevices(); fetchSummary(); } }, 30000);
     </script>
 </body>
 </html>
-EOF
+DASHBOARD_HTML_END
 
-cat > modules/web_ui/templates/login.html <<'EOF'
+cat > modules/web_ui/templates/login.html <<'LOGIN_HTML_END'
 <!DOCTYPE html>
-<html>
-<head><title>SysWatch Login</title></head>
-<body style="font-family: sans-serif; background: #f0f4f8; display: flex; justify-content: center; align-items: center; height: 100vh;">
-<div style="background: #fff; padding: 40px; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); width: 320px;">
-    <h2 style="text-align: center;">🔐 SysWatch</h2>
-    {% if error %}<p style="color:red; text-align:center;">{{ error }}</p>{% endif %}
+<html><head><title>SysWatch Login</title></head>
+<body style="font-family:sans-serif;background:#f0f4f8;display:flex;justify-content:center;align-items:center;height:100vh;">
+<div style="background:#fff;padding:40px;border-radius:12px;box-shadow:0 4px 12px rgba(0,0,0,0.1);width:320px;">
+    <h2 style="text-align:center;">🔐 SysWatch</h2>
+    {% if error %}<p style="color:red;text-align:center;">{{ error }}</p>{% endif %}
     <form method="POST">
-        <input type="text" name="username" placeholder="Username" required style="width:100%; padding:10px; margin-bottom:10px; border:1px solid #ccc; border-radius:6px;">
-        <input type="password" name="password" placeholder="Password" required style="width:100%; padding:10px; margin-bottom:10px; border:1px solid #ccc; border-radius:6px;">
-        <button type="submit" style="width:100%; padding:10px; background:#3498db; color:#fff; border:none; border-radius:6px; font-weight:bold; cursor:pointer;">Log in</button>
+        <input type="text" name="username" placeholder="Username" required style="width:100%;padding:10px;margin-bottom:10px;border:1px solid #ccc;border-radius:6px;">
+        <input type="password" name="password" placeholder="Password" required style="width:100%;padding:10px;margin-bottom:10px;border:1px solid #ccc;border-radius:6px;">
+        <button type="submit" style="width:100%;padding:10px;background:#3498db;color:#fff;border:none;border-radius:6px;font-weight:bold;cursor:pointer;">Log in</button>
     </form>
 </div>
 </body>
 </html>
-EOF
+LOGIN_HTML_END
 
 # ----------------------------------------------------------------------
-# 5. MODULES – API (with all endpoints)
+# 5. MODULES – API
 # ----------------------------------------------------------------------
-cat > modules/api/__init__.py <<'EOF'
+cat > modules/api/__init__.py <<'API_INIT_END'
 # modules/api/__init__.py
-EOF
-
-cat > modules/api/routes.py <<'EOF'
+API_INIT_END
+cat > modules/api/routes.py <<'API_ROUTES_END'
 import json, datetime, pymysql, ipaddress, subprocess, threading, socket
 from flask import Blueprint, request, jsonify
 from flask_login import login_required, current_user
@@ -835,7 +1112,6 @@ from modules.discovery.sweep import run_discovery_sweep
 
 bp = Blueprint('api', __name__)
 
-# ---- Agent Ingest ----
 @bp.route('/report', methods=['POST'])
 def report():
     if request.headers.get('X-API-Key') != Config.API_KEY:
@@ -865,7 +1141,6 @@ def report():
     cur.close()
     return jsonify({"status": "ok"})
 
-# ---- Latest hosts ----
 @bp.route('/latest')
 @login_required
 def latest():
@@ -910,7 +1185,6 @@ def latest():
     cur.close()
     return jsonify(result)
 
-# ---- Trends ----
 @bp.route('/trends/<hostname>')
 @login_required
 def trends(hostname):
@@ -927,7 +1201,6 @@ def trends(hostname):
     cur.close()
     return jsonify(data)
 
-# ---- Alerts ----
 @bp.route('/alerts')
 @login_required
 def alerts_api():
@@ -964,7 +1237,6 @@ def acknowledge_alert(alert_id):
     cur.close()
     return jsonify({"status": "ok"})
 
-# ---- Events ----
 @bp.route('/events')
 @login_required
 def events_api():
@@ -1002,7 +1274,6 @@ def events_api():
     cur.close()
     return jsonify(events)
 
-# ---- Groups ----
 @bp.route('/groups')
 @login_required
 def list_groups():
@@ -1045,7 +1316,6 @@ def delete_group(group_id):
     cur.close()
     return jsonify({"status": "ok"})
 
-# ---- Summary ----
 @bp.route('/summary')
 @login_required
 def summary():
@@ -1059,7 +1329,6 @@ def summary():
     cur.close()
     return jsonify({"total": total, "up": up, "warning": warning, "down": down, "open_alerts": open_alerts})
 
-# ---- Rules ----
 @bp.route('/rules', methods=['GET'])
 @login_required
 def list_rules():
@@ -1122,7 +1391,6 @@ def delete_rule(rule_id):
     cur.close()
     return jsonify({"status": "ok"})
 
-# ---- Hosts ----
 @bp.route('/hosts', methods=['GET'])
 @login_required
 def list_hosts():
@@ -1160,7 +1428,6 @@ def add_host():
     cur.close()
     return jsonify({"status": "ok", "hostname": hostname})
 
-# ---- Remote Execution ----
 @bp.route('/hosts/<hostname>/exec', methods=['POST'])
 @login_required
 def execute_command(hostname):
@@ -1187,7 +1454,6 @@ def execute_command(hostname):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# ---- AI Insights ----
 @bp.route('/ai_insights')
 @login_required
 def ai_insights():
@@ -1201,7 +1467,6 @@ def ai_insights():
     cur.close()
     return jsonify(insights)
 
-# ---- Pending Hosts (for auto-deploy) ----
 @bp.route('/pending')
 @login_required
 def pending_hosts():
@@ -1225,7 +1490,6 @@ def approve_pending(id):
     if not row:
         return jsonify({"error": "No pending host found"}), 404
     ip, os_type = row
-    # Deploy agent (stub – implement via SSH/WinRM)
     from modules.remote_exec.executor import deploy_agent
     success, msg = deploy_agent(ip, os_type)
     if success:
@@ -1247,7 +1511,6 @@ def reject_pending(id):
     cur.close()
     return jsonify({"status": "ok"})
 
-# ---- Discovery ----
 discovery_status = {"running": False, "progress": 0, "total": 0, "found": 0, "message": ""}
 
 @bp.route('/discover/start', methods=['POST'])
@@ -1265,7 +1528,6 @@ def start_discovery():
 def discovery_status_endpoint():
     return jsonify(discovery_status)
 
-# ---- Remediation Suggestions ----
 @bp.route('/alerts/<int:alert_id>/suggest', methods=['POST'])
 @login_required
 def suggest_remediation(alert_id):
@@ -1351,7 +1613,6 @@ def execute_remediation(alert_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-# ---- WinRM specific ----
 @bp.route('/winrm/hosts')
 @login_required
 def winrm_hosts():
@@ -1387,16 +1648,16 @@ def winrm_execute(hostname):
         return jsonify({"status": "ok", "output": stdout, "error": stderr})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
-EOF
+API_ROUTES_END
 
 # ----------------------------------------------------------------------
 # 6. MODULES – MONITORING CHECKS
 # ----------------------------------------------------------------------
-cat > modules/monitoring_checks/__init__.py <<'EOF'
+cat > modules/monitoring_checks/__init__.py <<'MON_INIT_END'
 # modules/monitoring_checks/__init__.py
-EOF
+MON_INIT_END
 
-cat > modules/monitoring_checks/status_updater.py <<'EOF'
+cat > modules/monitoring_checks/status_updater.py <<'STATUS_UPDATER_END'
 import datetime
 from core.database import get_db
 from core.app import app
@@ -1439,9 +1700,9 @@ def compute_status():
             cur.execute("UPDATE hosts SET status = %s WHERE hostname = %s", (status, hostname))
         db.commit()
         cur.close()
-EOF
+STATUS_UPDATER_END
 
-cat > modules/monitoring_checks/ssl_expiry.py <<'EOF'
+cat > modules/monitoring_checks/ssl_expiry.py <<'SSL_EXPIRY_END'
 import ssl, socket, datetime, OpenSSL.crypto
 from core.database import get_db
 from core.app import app
@@ -1459,7 +1720,7 @@ def fetch_cert_expiry(hostname, port=443):
                 expiry_date = datetime.datetime.strptime(expiry_str, '%Y%m%d%H%M%SZ').date()
                 return expiry_date
     except Exception as e:
-        print(f"SSL fetch error for {hostname}:{port} - {e}")
+        print(f"SSL fetch error: {e}")
         return None
 
 def check_all_certificates():
@@ -1477,40 +1738,30 @@ def check_all_certificates():
                 days_remaining = (stored_expiry - today).days
                 if 0 <= days_remaining <= 7:
                     severity = "WARNING" if days_remaining > 2 else "CRITICAL"
-                    dispatch_alert(
-                        hostname=hostname, metric="ssl_expiry", value=days_remaining, threshold=7,
-                        severity=severity,
-                        cause=f"SSL certificate expires in {days_remaining} days on {stored_expiry}",
-                        action="Renew the certificate."
-                    )
+                    dispatch_alert(hostname, "ssl_expiry", days_remaining, 7, severity,
+                                   f"SSL expires in {days_remaining} days", "Renew the certificate.")
                 elif days_remaining < 0:
-                    dispatch_alert(
-                        hostname=hostname, metric="ssl_expiry", value=days_remaining, threshold=0,
-                        severity="CRITICAL",
-                        cause=f"SSL certificate expired on {stored_expiry}",
-                        action="Renew immediately."
-                    )
+                    dispatch_alert(hostname, "ssl_expiry", days_remaining, 0, "CRITICAL",
+                                   f"SSL expired on {stored_expiry}", "Renew immediately.")
                 cur.execute("UPDATE ssl_certificates SET last_checked = NOW() WHERE hostname = %s AND port = 443", (hostname,))
                 db.commit()
             else:
                 expiry_date = fetch_cert_expiry(hostname, 443)
                 if expiry_date:
-                    cur.execute(
-                        "INSERT INTO ssl_certificates (hostname, port, expiry_date, last_checked) VALUES (%s, 443, %s, NOW())",
-                        (hostname, expiry_date)
-                    )
+                    cur.execute("INSERT INTO ssl_certificates (hostname, port, expiry_date, last_checked) VALUES (%s, 443, %s, NOW())",
+                                (hostname, expiry_date))
                     db.commit()
         cur.close()
-EOF
+SSL_EXPIRY_END
 
 # ----------------------------------------------------------------------
 # 7. MODULES – ALERT ENGINE
 # ----------------------------------------------------------------------
-cat > modules/alert_engine/__init__.py <<'EOF'
+cat > modules/alert_engine/__init__.py <<'ALERT_ENGINE_INIT_END'
 # modules/alert_engine/__init__.py
-EOF
+ALERT_ENGINE_INIT_END
 
-cat > modules/alert_engine/lifecycle.py <<'EOF'
+cat > modules/alert_engine/lifecycle.py <<'LIFECYCLE_END'
 import datetime, logging
 from core.database import get_db
 from modules.alert_engine.notifiers import dispatch_alert
@@ -1543,11 +1794,7 @@ def evaluate_alerts(hostname, data):
             elif op == "<" and value < threshold:
                 violated = True
             if violated:
-                cur.execute(
-                    "SELECT id, timestamp, status FROM alerts WHERE hostname=%s AND metric=%s "
-                    "AND status IN ('OPEN','ACKNOWLEDGED') ORDER BY timestamp DESC LIMIT 1",
-                    (hostname, metric)
-                )
+                cur.execute("SELECT id, timestamp, status FROM alerts WHERE hostname=%s AND metric=%s AND status IN ('OPEN','ACKNOWLEDGED') ORDER BY timestamp DESC LIMIT 1", (hostname, metric))
                 existing = cur.fetchone()
                 fire = True
                 if existing:
@@ -1555,26 +1802,20 @@ def evaluate_alerts(hostname, data):
                     if (now - last_time).total_seconds() < cooldown:
                         fire = False
                 if fire:
-                    cur.execute(
-                        "INSERT INTO alerts (hostname, metric, value, threshold, severity, cause, action, status) "
-                        "VALUES (%s, %s, %s, %s, %s, %s, %s, 'OPEN')",
-                        (hostname, metric, value, threshold, severity, cause, action)
-                    )
+                    cur.execute("INSERT INTO alerts (hostname, metric, value, threshold, severity, cause, action, status) VALUES (%s, %s, %s, %s, %s, %s, %s, 'OPEN')",
+                                (hostname, metric, value, threshold, severity, cause, action))
                     db.commit()
                     dispatch_alert(hostname, metric, value, threshold, severity, cause, action)
             else:
-                cur.execute(
-                    "UPDATE alerts SET status = 'RESOLVED', resolved = 1, resolved_at = %s "
-                    "WHERE hostname = %s AND metric = %s AND status IN ('OPEN','ACKNOWLEDGED')",
-                    (now, hostname, metric)
-                )
+                cur.execute("UPDATE alerts SET status = 'RESOLVED', resolved = 1, resolved_at = %s WHERE hostname = %s AND metric = %s AND status IN ('OPEN','ACKNOWLEDGED')",
+                            (now, hostname, metric))
                 db.commit()
         cur.close()
     except Exception as e:
         logger.error(f"Error in evaluate_alerts: {e}", exc_info=True)
-EOF
+LIFECYCLE_END
 
-cat > modules/alert_engine/auto_resolve.py <<'EOF'
+cat > modules/alert_engine/auto_resolve.py <<'AUTO_RESOLVE_END'
 import datetime, logging
 from core.database import get_db
 
@@ -1605,11 +1846,11 @@ def auto_resolve_stale_alerts():
             if not violated:
                 cur.execute("UPDATE alerts SET status = 'RESOLVED', resolved = 1, resolved_at = NOW() WHERE id = %s", (alert_id,))
                 db.commit()
-                logger.info(f"Auto-resolved alert {alert_id} for {hostname} {metric}")
+                logger.info(f"Auto-resolved alert {alert_id}")
     cur.close()
-EOF
+AUTO_RESOLVE_END
 
-cat > modules/alert_engine/notifiers.py <<'EOF'
+cat > modules/alert_engine/notifiers.py <<'NOTIFIERS_END'
 import smtplib, requests, datetime
 from email.mime.text import MIMEText
 from core.config import Config
@@ -1649,16 +1890,16 @@ Action: {action or 'N/A'}
 Time: {datetime.datetime.utcnow().isoformat()}"""
     send_email(subject, body)
     send_teams(subject, body)
-EOF
+NOTIFIERS_END
 
 # ----------------------------------------------------------------------
-# 8. MODULES – AI (DeepSeek + Gemini)
+# 8. MODULES – AI
 # ----------------------------------------------------------------------
-cat > modules/ai/__init__.py <<'EOF'
+cat > modules/ai/__init__.py <<'AI_INIT_END'
 # modules/ai/__init__.py
-EOF
+AI_INIT_END
 
-cat > modules/ai/deepseek.py <<'EOF'
+cat > modules/ai/deepseek.py <<'DEEPSEEK_END'
 import json, requests, logging
 from core.config import Config
 
@@ -1672,24 +1913,17 @@ GEMINI_API_URL = Config.GEMINI_API_URL
 
 def analyze_with_deepseek(analysis_type, context):
     if not DEEPSEEK_API_KEY and not GEMINI_API_KEY:
-        logger.info("No AI API key configured – skipping AI analysis.")
+        logger.info("No AI API key configured.")
         return None
 
-    system_prompt = """
-    You are SysWatch AI, an expert infrastructure monitoring assistant.
-    Respond in JSON format with keys: analysis_type, severity, summary, details, recommendation, confidence.
-    """
+    system_prompt = "You are SysWatch AI. Respond in JSON format with keys: analysis_type, severity, summary, details, recommendation, confidence."
     user_prompt = f"Analysis Type: {analysis_type}\nContext: {json.dumps(context, indent=2)}"
 
-    # Try DeepSeek first
     if DEEPSEEK_API_KEY:
         try:
             payload = {
                 "model": DEEPSEEK_MODEL,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": user_prompt}
-                ],
+                "messages": [{"role": "system", "content": system_prompt}, {"role": "user", "content": user_prompt}],
                 "temperature": 0.3,
                 "response_format": {"type": "json_object"}
             }
@@ -1698,11 +1932,10 @@ def analyze_with_deepseek(analysis_type, context):
                 content = resp.json().get("choices", [{}])[0].get("message", {}).get("content", "")
                 return json.loads(content)
             else:
-                logger.warning(f"DeepSeek API error: {resp.status_code}")
+                logger.warning(f"DeepSeek error: {resp.status_code}")
         except Exception as e:
-            logger.warning(f"DeepSeek error: {e}")
+            logger.warning(f"DeepSeek exception: {e}")
 
-    # Fallback to Gemini
     if GEMINI_API_KEY:
         try:
             payload = {"contents": [{"parts": [{"text": f"{system_prompt}\n\n{user_prompt}"}]}]}
@@ -1713,17 +1946,17 @@ def analyze_with_deepseek(analysis_type, context):
                 json_match = re.search(r'\{.*\}', text, re.DOTALL)
                 if json_match:
                     return json.loads(json_match.group(0))
-                return {"summary": text[:200], "recommendation": "Check Gemini response for details."}
+                return {"summary": text[:200], "recommendation": "Check Gemini response."}
             else:
-                logger.warning(f"Gemini API error: {resp.status_code}")
+                logger.warning(f"Gemini error: {resp.status_code}")
         except Exception as e:
-            logger.warning(f"Gemini error: {e}")
+            logger.warning(f"Gemini exception: {e}")
 
-    logger.info("All AI providers failed – falling back to statistical analysis.")
+    logger.info("All AI providers failed.")
     return None
-EOF
+DEEPSEEK_END
 
-cat > modules/ai/anomaly.py <<'EOF'
+cat > modules/ai/anomaly.py <<'ANOMALY_END'
 import statistics, logging, datetime, json
 from core.database import get_db
 from core.app import app
@@ -1738,51 +1971,33 @@ def run_anomaly_detection():
         cur = db.cursor()
         cur.execute("SELECT DISTINCT hostname FROM hosts WHERE status != 'DOWN'")
         hosts = cur.fetchall()
-        if not hosts:
-            return
+        if not hosts: return
         for (hostname,) in hosts:
             for metric in ['cpu', 'memory', 'disk']:
-                cur.execute(
-                    f"SELECT {metric} FROM metrics WHERE hostname = %s AND timestamp >= NOW() - INTERVAL 7 DAY "
-                    f"AND {metric} IS NOT NULL ORDER BY timestamp DESC LIMIT 100",
-                    (hostname,)
-                )
+                cur.execute(f"SELECT {metric} FROM metrics WHERE hostname = %s AND timestamp >= NOW() - INTERVAL 7 DAY AND {metric} IS NOT NULL ORDER BY timestamp DESC LIMIT 100", (hostname,))
                 rows = cur.fetchall()
-                if len(rows) < 10:
-                    continue
+                if len(rows) < 10: continue
                 values = [r[0] for r in rows]
                 mean = statistics.mean(values)
                 std = statistics.stdev(values) if len(values) > 1 else 0
-                if std == 0:
-                    continue
-                cur.execute(
-                    f"SELECT {metric} FROM metrics WHERE hostname = %s AND {metric} IS NOT NULL ORDER BY timestamp DESC LIMIT 1",
-                    (hostname,)
-                )
+                if std == 0: continue
+                cur.execute(f"SELECT {metric} FROM metrics WHERE hostname = %s AND {metric} IS NOT NULL ORDER BY timestamp DESC LIMIT 1", (hostname,))
                 current_row = cur.fetchone()
-                if not current_row:
-                    continue
+                if not current_row: continue
                 current_value = current_row[0]
                 if current_value > mean + (2 * std):
                     deviation = (current_value - mean) / std
                     severity = "WARNING" if deviation < 3 else "CRITICAL"
                     details = {"deviation": deviation, "mean": mean, "std": std}
-                    ai_analysis = analyze_with_deepseek("anomaly", {
-                        "hostname": hostname, "metric": metric,
-                        "current_value": current_value, "baseline_mean": mean,
-                        "baseline_std": std, "deviation": deviation
-                    })
+                    ai_analysis = analyze_with_deepseek("anomaly", {"hostname": hostname, "metric": metric, "current_value": current_value, "baseline_mean": mean, "baseline_std": std})
                     if ai_analysis:
                         details["ai_summary"] = ai_analysis.get("summary", "")
                         details["ai_recommendation"] = ai_analysis.get("recommendation", "")
-                    cur.execute(
-                        "INSERT INTO ai_insights (hostname, metric, current_value, baseline_mean, baseline_std, deviation, severity, details) "
-                        "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                        (hostname, metric, current_value, mean, std, deviation, severity, json.dumps(details))
-                    )
+                    cur.execute("INSERT INTO ai_insights (hostname, metric, current_value, baseline_mean, baseline_std, deviation, severity, details) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                                (hostname, metric, current_value, mean, std, deviation, severity, json.dumps(details)))
                     db.commit()
                     dispatch_alert(hostname, f"ai_{metric}", current_value, round(mean + 2*std, 2), severity,
-                                   f"AI anomaly: {metric} exceeded baseline. {ai_analysis.get('summary', '')}" if ai_analysis else f"AI anomaly: {metric} exceeded baseline.",
+                                   f"AI anomaly: {metric} exceeded baseline. {ai_analysis.get('summary', '') if ai_analysis else ''}",
                                    ai_analysis.get("recommendation", "Investigate recent changes.") if ai_analysis else "Investigate recent changes.")
         cur.close()
 
@@ -1793,17 +2008,11 @@ def run_predictions():
         cur.execute("SELECT hostname FROM hosts WHERE status != 'DOWN'")
         hosts = cur.fetchall()
         for (hostname,) in hosts:
-            # Disk full prediction
-            cur.execute("""
-                SELECT disk, UNIX_TIMESTAMP(timestamp) as ts FROM metrics WHERE hostname = %s AND disk IS NOT NULL 
-                AND timestamp >= NOW() - INTERVAL 7 DAY ORDER BY timestamp ASC
-            """, (hostname,))
+            cur.execute("SELECT disk, UNIX_TIMESTAMP(timestamp) as ts FROM metrics WHERE hostname = %s AND disk IS NOT NULL AND timestamp >= NOW() - INTERVAL 7 DAY ORDER BY timestamp ASC", (hostname,))
             rows = cur.fetchall()
             if len(rows) >= 2:
-                values = [r[0] for r in rows]
-                times = [r[1] for r in rows]
-                n = len(times)
-                sum_x = sum(times); sum_y = sum(values); sum_xy = sum([t*v for t,v in zip(times, values)]); sum_x2 = sum([t**2 for t in times])
+                values = [r[0] for r in rows]; times = [r[1] for r in rows]
+                n = len(times); sum_x = sum(times); sum_y = sum(values); sum_xy = sum([t*v for t,v in zip(times, values)]); sum_x2 = sum([t**2 for t in times])
                 denom = n*sum_x2 - sum_x**2
                 if denom != 0:
                     slope = (n*sum_xy - sum_x*sum_y) / denom
@@ -1814,54 +2023,36 @@ def run_predictions():
                             if days_to_full < 30:
                                 severity = "WARNING" if days_to_full > 7 else "CRITICAL"
                                 details = {"days_remaining": days_to_full}
-                                ai_analysis = analyze_with_deepseek("prediction", {
-                                    "hostname": hostname, "metric": "disk",
-                                    "current_usage": last_value, "days_to_full": days_to_full
-                                })
+                                ai_analysis = analyze_with_deepseek("prediction", {"hostname": hostname, "metric": "disk", "days_to_full": days_to_full})
                                 if ai_analysis:
                                     details["ai_summary"] = ai_analysis.get("summary", "")
                                     details["ai_recommendation"] = ai_analysis.get("recommendation", "")
-                                cur.execute(
-                                    "INSERT INTO ai_insights (hostname, metric, current_value, baseline_mean, baseline_std, deviation, severity, details) "
-                                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                                    (hostname, "prediction_disk_full", days_to_full, 0, 0, 0, severity, json.dumps(details))
-                                )
+                                cur.execute("INSERT INTO ai_insights (hostname, metric, current_value, baseline_mean, baseline_std, deviation, severity, details) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                                            (hostname, "prediction_disk_full", days_to_full, 0, 0, 0, severity, json.dumps(details)))
                                 db.commit()
                                 dispatch_alert(hostname, "prediction_disk_full", days_to_full, 0, severity,
-                                               f"Disk will be full in {days_to_full:.1f} days. {ai_analysis.get('summary', '')}" if ai_analysis else f"Disk will be full in {days_to_full:.1f} days.",
-                                               ai_analysis.get("recommendation", "Extend volume or clean up files.") if ai_analysis else "Extend volume or clean up files.")
-            # Memory leak detection
-            cur.execute("""
-                SELECT memory, UNIX_TIMESTAMP(timestamp) as ts FROM metrics WHERE hostname = %s AND memory IS NOT NULL 
-                AND timestamp >= NOW() - INTERVAL 7 DAY ORDER BY timestamp ASC
-            """, (hostname,))
+                                               f"Disk full in {days_to_full:.1f} days. {ai_analysis.get('summary', '') if ai_analysis else ''}",
+                                               ai_analysis.get("recommendation", "Extend volume or clean up.") if ai_analysis else "Extend volume or clean up.")
+            cur.execute("SELECT memory, UNIX_TIMESTAMP(timestamp) as ts FROM metrics WHERE hostname = %s AND memory IS NOT NULL AND timestamp >= NOW() - INTERVAL 7 DAY ORDER BY timestamp ASC", (hostname,))
             rows = cur.fetchall()
             if len(rows) >= 2:
-                values = [r[0] for r in rows]
-                times = [r[1] for r in rows]
-                n = len(times)
-                sum_x = sum(times); sum_y = sum(values); sum_xy = sum([t*v for t,v in zip(times, values)]); sum_x2 = sum([t**2 for t in times])
+                values = [r[0] for r in rows]; times = [r[1] for r in rows]
+                n = len(times); sum_x = sum(times); sum_y = sum(values); sum_xy = sum([t*v for t,v in zip(times, values)]); sum_x2 = sum([t**2 for t in times])
                 denom = n*sum_x2 - sum_x**2
                 if denom != 0:
                     slope = (n*sum_xy - sum_x*sum_y) / denom
                     if slope > 0.1:
                         severity = "WARNING" if slope < 0.2 else "CRITICAL"
                         details = {"slope": slope}
-                        ai_analysis = analyze_with_deepseek("prediction", {
-                            "hostname": hostname, "metric": "memory",
-                            "slope": slope, "current_memory": values[-1]
-                        })
+                        ai_analysis = analyze_with_deepseek("prediction", {"hostname": hostname, "metric": "memory", "slope": slope})
                         if ai_analysis:
                             details["ai_summary"] = ai_analysis.get("summary", "")
                             details["ai_recommendation"] = ai_analysis.get("recommendation", "")
-                        cur.execute(
-                            "INSERT INTO ai_insights (hostname, metric, current_value, baseline_mean, baseline_std, deviation, severity, details) "
-                            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
-                            (hostname, "memory_leak_detected", slope, 0, 0, 0, severity, json.dumps(details))
-                        )
+                        cur.execute("INSERT INTO ai_insights (hostname, metric, current_value, baseline_mean, baseline_std, deviation, severity, details) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                                    (hostname, "memory_leak_detected", slope, 0, 0, 0, severity, json.dumps(details)))
                         db.commit()
                         dispatch_alert(hostname, "memory_leak_detected", slope, 0, severity,
-                                       f"Memory usage increasing steadily (slope {slope:.2f}% per second). {ai_analysis.get('summary', '')}" if ai_analysis else f"Memory usage increasing steadily (slope {slope:.2f}% per second).",
+                                       f"Memory increasing (slope {slope:.2f}). {ai_analysis.get('summary', '') if ai_analysis else ''}",
                                        ai_analysis.get("recommendation", "Check for memory leaks.") if ai_analysis else "Check for memory leaks.")
         cur.close()
 
@@ -1870,35 +2061,30 @@ def send_daily_briefing():
         db = get_db()
         cur = db.cursor()
         cur.execute("SELECT COUNT(*) FROM alerts WHERE timestamp >= NOW() - INTERVAL 1 DAY")
-        total_alerts = cur.fetchone()[0]
+        total = cur.fetchone()[0]
         cur.execute("SELECT COUNT(*) FROM alerts WHERE timestamp >= NOW() - INTERVAL 1 DAY AND status='OPEN'")
-        open_alerts = cur.fetchone()[0]
-        cur.execute("SELECT COUNT(*) FROM alerts WHERE timestamp >= NOW() - INTERVAL 1 DAY AND status='RESOLVED'")
-        resolved_alerts = cur.fetchone()[0]
+        open_ = cur.fetchone()[0]
         cur.execute("SELECT COUNT(*) FROM hosts WHERE discovery_time >= NOW() - INTERVAL 1 DAY")
-        new_hosts = cur.fetchone()[0]
-        context = {"total_alerts": total_alerts, "open_alerts": open_alerts, "resolved_alerts": resolved_alerts, "new_hosts": new_hosts}
+        new = cur.fetchone()[0]
+        context = {"total_alerts": total, "open_alerts": open_, "new_hosts": new}
         ai_analysis = analyze_with_deepseek("briefing", context)
         if ai_analysis:
-            body = f"Date: {datetime.datetime.now().strftime('%Y-%m-%d')}\n\n"
-            body += ai_analysis.get("summary", "No significant changes.")
-            body += "\n\n" + ai_analysis.get("details", "")
-            dispatch_alert("SysWatch", "daily_briefing", 0, 0, "INFO", body, "Review the daily briefing.")
+            body = f"Date: {datetime.datetime.now().strftime('%Y-%m-%d')}\n\n{ai_analysis.get('summary', 'No changes.')}"
+            dispatch_alert("SysWatch", "daily_briefing", 0, 0, "INFO", body, "Review briefing.")
         else:
-            body = f"Date: {datetime.datetime.now().strftime('%Y-%m-%d')}\n"
-            body += f"Total Alerts: {total_alerts}\nOpen: {open_alerts}\nResolved: {resolved_alerts}\nNew Hosts: {new_hosts}"
-            dispatch_alert("SysWatch", "daily_briefing", 0, 0, "INFO", body, "Review the daily briefing.")
+            body = f"Date: {datetime.datetime.now().strftime('%Y-%m-%d')}\nTotal: {total}\nOpen: {open_}\nNew Hosts: {new}"
+            dispatch_alert("SysWatch", "daily_briefing", 0, 0, "INFO", body, "Review briefing.")
         cur.close()
-EOF
+ANOMALY_END
 
 # ----------------------------------------------------------------------
 # 9. MODULES – REMOTE EXEC, DISCOVERY, REMEDIATION
 # ----------------------------------------------------------------------
-cat > modules/remote_exec/__init__.py <<'EOF'
+cat > modules/remote_exec/__init__.py <<'REMOTE_INIT_END'
 # modules/remote_exec/__init__.py
-EOF
+REMOTE_INIT_END
 
-cat > modules/remote_exec/executor.py <<'EOF'
+cat > modules/remote_exec/executor.py <<'EXECUTOR_END'
 import os, paramiko, winrm
 from core.config import Config
 
@@ -1925,28 +2111,25 @@ def winrm_exec(ip, command):
     return result.std_out.decode(), result.std_err.decode()
 
 def deploy_agent(ip, os_type):
-    # Stub – implement real deployment via SSH or WinRM
     if os_type == 'linux':
         cmd = "curl -s https://your-server/agent/installer.sh | bash"
         out, err = ssh_exec(ip, cmd)
-        if err:
-            return False, err
+        if err: return False, err
         return True, "Deployed"
     elif os_type == 'windows':
         cmd = "powershell -Command \"Invoke-WebRequest -Uri https://your-server/agent/installer.ps1 -OutFile $env:TEMP\\install.ps1; & $env:TEMP\\install.ps1\""
         out, err = winrm_exec(ip, cmd)
-        if err:
-            return False, err
+        if err: return False, err
         return True, "Deployed"
     return False, "Unsupported OS"
-EOF
+EXECUTOR_END
 
-cat > modules/discovery/__init__.py <<'EOF'
+cat > modules/discovery/__init__.py <<'DISCOVERY_INIT_END'
 # modules/discovery/__init__.py
-EOF
+DISCOVERY_INIT_END
 
-cat > modules/discovery/sweep.py <<'EOF'
-import ipaddress, subprocess, socket, threading
+cat > modules/discovery/sweep.py <<'SWEEP_END'
+import ipaddress, subprocess, socket
 from core.database import get_db
 from core.app import app
 from modules.api.routes import discovery_status
@@ -1957,19 +2140,17 @@ def run_discovery_sweep():
         cur = db.cursor()
         cur.execute("SELECT subnet FROM network_ranges WHERE enabled=1")
         subnets = [r[0] for r in cur.fetchall()]
-        if not subnets:
-            return
+        if not subnets: return
 
         discovery_status["running"] = True
         discovery_status["progress"] = 0
-        discovery_status["message"] = "Starting discovery sweep..."
+        discovery_status["message"] = "Starting discovery..."
         total_hosts = 0
         for subnet in subnets:
             try:
                 network = ipaddress.ip_network(subnet, strict=False)
                 total_hosts += sum(1 for _ in network.hosts())
-            except:
-                pass
+            except: pass
         discovery_status["total"] = total_hosts
         processed = 0
         found = 0
@@ -1986,10 +2167,9 @@ def run_discovery_sweep():
                         hostname = ip_str
                     cur.execute("SELECT hostname FROM hosts WHERE ip = %s", (ip_str,))
                     if not cur.fetchone():
-                        cur.execute(
-                            "INSERT INTO pending_hosts (ip_address, os_type, detected_at) VALUES (%s, %s, NOW())",
-                            (ip_str, 'linux' if subprocess.call(["nmap", "-p", "22", ip_str], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0 else 'windows')
-                        )
+                        is_win = subprocess.call(["nmap", "-p", "5986", ip_str], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) == 0
+                        cur.execute("INSERT INTO pending_hosts (ip_address, os_type, detected_at) VALUES (%s, %s, NOW())",
+                                    (ip_str, 'windows' if is_win else 'linux'))
                         found += 1
                         db.commit()
                 processed += 1
@@ -1999,13 +2179,13 @@ def run_discovery_sweep():
         discovery_status["running"] = False
         discovery_status["message"] = f"Discovery complete. Found {found} new hosts."
         cur.close()
-EOF
+SWEEP_END
 
-cat > modules/remediation/__init__.py <<'EOF'
+cat > modules/remediation/__init__.py <<'REMEDIATION_INIT_END'
 # modules/remediation/__init__.py
-EOF
+REMEDIATION_INIT_END
 
-cat > modules/remediation/suggest.py <<'EOF'
+cat > modules/remediation/suggest.py <<'SUGGEST_END'
 def generate_suggestion(hostname, metric, value, threshold, severity, cause):
     if metric == 'cpu' and value > 85:
         return "High CPU detected. Consider restarting heavy services.", "systemctl restart $(systemctl list-units --type=service --state=running | head -5 | tail -1 | awk '{print $1}')"
@@ -2014,16 +2194,16 @@ def generate_suggestion(hostname, metric, value, threshold, severity, cause):
     elif metric == 'disk' and value > 90:
         return "Disk space critical. Clean old logs.", "find /var/log -type f -mtime +7 -delete"
     return None, None
-EOF
+SUGGEST_END
 
 # ----------------------------------------------------------------------
 # 10. AGENT
 # ----------------------------------------------------------------------
-cat > agents/__init__.py <<'EOF'
+cat > agents/__init__.py <<'AGENT_INIT_END'
 # agents/__init__.py
-EOF
+AGENT_INIT_END
 
-cat > agents/client.py <<'EOF'
+cat > agents/client.py <<'AGENT_CLIENT_END'
 #!/usr/bin/env python3
 import os, time, json, socket, subprocess, uuid, logging, platform
 import requests, psutil
@@ -2105,7 +2285,6 @@ def collect_metrics():
 
 def main():
     logger.info("SysWatch Agent v1.2.0 starting...")
-    # File watcher for /etc (Linux) or System32 (Windows)
     path = "/etc" if platform.system() != "Windows" else "C:\\Windows\\System32\\config"
     observer = Observer()
     observer.schedule(FileChangeHandler(), path, recursive=True)
@@ -2125,31 +2304,30 @@ def main():
 
 if __name__ == "__main__":
     main()
-EOF
+AGENT_CLIENT_END
 
 # ----------------------------------------------------------------------
 # 11. SCRIPTS
 # ----------------------------------------------------------------------
-cat > scripts/deploy_agent.sh <<'EOF'
+cat > scripts/deploy_agent.sh <<'DEPLOY_AGENT_END'
 #!/bin/bash
-# deploy_agent.sh – Deploy SysWatch agent to remote Linux host via SSH
 if [ $# -lt 1 ]; then echo "Usage: $0 <hostname_or_ip>"; exit 1; fi
 HOST=$1
 scp -i /opt/syswatch/keys/syswatch_key agents/client.py "$HOST":/tmp/client.py
 ssh -i /opt/syswatch/keys/syswatch_key "$HOST" "sudo mv /tmp/client.py /opt/syswatch-agent/ && sudo chmod +x /opt/syswatch-agent/client.py"
-EOF
+DEPLOY_AGENT_END
 chmod +x scripts/deploy_agent.sh
 
 # ----------------------------------------------------------------------
 # 12. TOP LEVEL FILES
 # ----------------------------------------------------------------------
-cat > wsgi.py <<'EOF'
+cat > wsgi.py <<'WSGI_END'
 from core.app import app
 if __name__ == "__main__":
     app.run()
-EOF
+WSGI_END
 
-cat > requirements.txt <<'EOF'
+cat > requirements.txt <<'REQ_END'
 flask
 flask-login
 pymysql
@@ -2163,9 +2341,9 @@ paramiko
 pywinrm
 ldap3
 watchdog
-EOF
+REQ_END
 
-cat > .env.example <<'EOF'
+cat > .env.example <<'ENV_EXAMPLE_END'
 SECRET_KEY=your-secret-key
 DB_HOST=127.0.0.1
 DB_USER=monitor
@@ -2200,22 +2378,286 @@ LDAP_GROUP_DN=CN=Groups,DC=yourdomain,DC=com
 LDAP_BIND_USER=CN=svc_syswatch,CN=Users,DC=yourdomain,DC=com
 LDAP_BIND_PASSWORD=your_svc_password
 LDAP_ROLE_MAPPING=CN=SysWatchAdmins,OU=Groups,DC=yourdomain,DC=com:Admin
-EOF
+ENV_EXAMPLE_END
 
-cat > README.md <<'EOF'
+cat > README.md <<'README_END'
 # SysWatch v1.2.0
 Simple Monitoring. Smarter Operations.
 
 ## Features
-- Events UI with filters (login, logout, file changes)
+- Events UI with filters
 - Granular RBAC (Admin, Operator, Viewer)
 - LDAP (AD/Azure) + local fallback
 - WinRM + dedicated Windows page
-- Auto-discovery + admin-approved deployment (SSH/WinRM)
+- Auto-discovery + admin-approved deployment
 - AI remediation (DeepSeek + Gemini) with Dry-Run & Execute
 - Remote command execution
-- Scheduler: anomaly detection, predictions, daily briefing, auto-resolve
 
-## Installation
+## Installation (Linux)
 ```bash
 sudo bash install.sh
+
+---
+
+# PART 3 (Lines ~1601 – end)
+
+```bash
+# ----------------------------------------------------------------------
+# 14. GENERATE INSTALL.PS1 (Windows installer)
+# ----------------------------------------------------------------------
+cat > install.ps1 <<'INSTALL_PS1_END'
+param(
+    [switch]$Auto
+)
+
+Write-Host "========================================" -ForegroundColor Cyan
+Write-Host "  SysWatch v1.2.0 Installation (Windows) " -ForegroundColor Cyan
+Write-Host "========================================" -ForegroundColor Cyan
+
+if (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {
+    Write-Host "❌ Please run as Administrator." -ForegroundColor Red
+    exit 1
+}
+
+$ErrorActionPreference = "Stop"
+trap {
+    Write-Host "❌ ERROR: $_" -ForegroundColor Red
+    exit 1
+}
+
+function Ensure-Chocolatey {
+    if (-not (Get-Command choco -ErrorAction SilentlyContinue)) {
+        Write-Host "📦 Installing Chocolatey..." -ForegroundColor Yellow
+        Set-ExecutionPolicy Bypass -Scope Process -Force
+        [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.ServicePointManager]::SecurityProtocol -bor 3072
+        iex ((New-Object System.Net.WebClient).DownloadString('https://chocolatey.org/install.ps1'))
+    }
+}
+
+function Ensure-Python {
+    if (-not (Get-Command python -ErrorAction SilentlyContinue)) {
+        Write-Host "🐍 Installing Python..." -ForegroundColor Yellow
+        Ensure-Chocolatey
+        choco install python -y
+        refreshenv
+    }
+}
+
+function Ensure-MySQL {
+    if (-not (Get-Command mysql -ErrorAction SilentlyContinue)) {
+        Write-Host "📊 Installing MySQL..." -ForegroundColor Yellow
+        Ensure-Chocolatey
+        choco install mysql -y
+        Start-Service MySQL
+        Start-Sleep -Seconds 10
+    }
+}
+
+Ensure-Python
+Ensure-MySQL
+
+if ($Auto) {
+    $DB_NAME = "monitoring"
+    $DB_USER = "monitor"
+    $DB_PASSWORD = "monitor123"
+    $ADMIN_PASS = "admin123"
+    $SMTP_SERVER = ""
+    $SMTP_PORT = 587
+    $SMTP_USER = ""
+    $SMTP_PASSWORD = ""
+    $ALERT_EMAIL_TO = ""
+    $TEAMS_WEBHOOK = ""
+    $DISCOVERY_SUBNET = "192.168.1.0/24"
+    $DEEPSEEK_API_KEY = ""
+    $GEMINI_API_KEY = ""
+    $LDAP_SERVER = ""
+    $LDAP_BASE_DN = ""
+    $LDAP_USER_DN = ""
+    $LDAP_BIND_USER = ""
+    $LDAP_BIND_PASSWORD = ""
+    $LDAP_ROLE_MAPPING = ""
+    $SSH_USER = "syswatch"
+    $SSH_KEY_PATH = "C:\SysWatch\keys\syswatch_key"
+    $WINRM_USER = "syswatch"
+    $WINRM_PASSWORD = ""
+    $USE_IIS = (Get-Command iisreset -ErrorAction SilentlyContinue) -ne $null
+} else {
+    Write-Host "`n⚙️  Configuration (press Enter to use defaults):" -ForegroundColor Green
+    $DB_NAME = Read-Host -Prompt "Database name [monitoring]"; if (-not $DB_NAME) { $DB_NAME = "monitoring" }
+    $DB_USER = Read-Host -Prompt "Database user [monitor]"; if (-not $DB_USER) { $DB_USER = "monitor" }
+    $DB_PASSWORD = Read-Host -Prompt "Database password [monitor123]"
+    if (-not $DB_PASSWORD) { $DB_PASSWORD = "monitor123" } else { $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($DB_PASSWORD); $DB_PASSWORD = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR) }
+    $ADMIN_PASS = Read-Host -Prompt "Admin password [admin123]"; if (-not $ADMIN_PASS) { $ADMIN_PASS = "admin123" }
+    $SMTP_SERVER = Read-Host -Prompt "SMTP server (leave blank to skip)"
+    if ($SMTP_SERVER) {
+        $SMTP_PORT = Read-Host -Prompt "SMTP port [587]"; if (-not $SMTP_PORT) { $SMTP_PORT = 587 }
+        $SMTP_USER = Read-Host -Prompt "SMTP username"
+        $SMTP_PASSWORD = Read-Host -Prompt "SMTP password" -AsSecureString
+        $BSTR2 = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($SMTP_PASSWORD); $SMTP_PASSWORD = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR2)
+        $ALERT_EMAIL_TO = Read-Host -Prompt "Alert recipient email"
+    } else {
+        $SMTP_PORT = 587; $SMTP_USER = ""; $SMTP_PASSWORD = ""; $ALERT_EMAIL_TO = ""
+    }
+    $TEAMS_WEBHOOK = Read-Host -Prompt "Teams webhook (leave blank)"
+    $DISCOVERY_SUBNET = Read-Host -Prompt "Discovery subnet [192.168.1.0/24]"; if (-not $DISCOVERY_SUBNET) { $DISCOVERY_SUBNET = "192.168.1.0/24" }
+    $DEEPSEEK_API_KEY = Read-Host -Prompt "DeepSeek API key (leave blank)"
+    $GEMINI_API_KEY = Read-Host -Prompt "Gemini API key (leave blank)"
+    $LDAP_SERVER = Read-Host -Prompt "LDAP server (leave blank)"
+    if ($LDAP_SERVER) {
+        $LDAP_BASE_DN = Read-Host -Prompt "LDAP base DN"
+        $LDAP_USER_DN = Read-Host -Prompt "LDAP user DN"
+        $LDAP_BIND_USER = Read-Host -Prompt "LDAP bind user"
+        $LDAP_BIND_PASSWORD = Read-Host -Prompt "LDAP bind password" -AsSecureString
+        $BSTR3 = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($LDAP_BIND_PASSWORD); $LDAP_BIND_PASSWORD = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR3)
+        $LDAP_ROLE_MAPPING = Read-Host -Prompt "LDAP role mapping (e.g., CN=Admins:Admin)"
+    } else {
+        $LDAP_BASE_DN = ""; $LDAP_USER_DN = ""; $LDAP_BIND_USER = ""; $LDAP_BIND_PASSWORD = ""; $LDAP_ROLE_MAPPING = ""
+    }
+    $SSH_USER = Read-Host -Prompt "SSH user [syswatch]"; if (-not $SSH_USER) { $SSH_USER = "syswatch" }
+    $SSH_KEY_PATH = Read-Host -Prompt "SSH key path [C:\SysWatch\keys\syswatch_key]"; if (-not $SSH_KEY_PATH) { $SSH_KEY_PATH = "C:\SysWatch\keys\syswatch_key" }
+    $WINRM_USER = Read-Host -Prompt "WinRM user [syswatch]"; if (-not $WINRM_USER) { $WINRM_USER = "syswatch" }
+    $WINRM_PASSWORD = Read-Host -Prompt "WinRM password (leave blank)" -AsSecureString
+    $BSTR4 = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($WINRM_PASSWORD); $WINRM_PASSWORD = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR4)
+    $USE_IIS = $false
+    if (Get-Command iisreset -ErrorAction SilentlyContinue) {
+        $USE_IIS = Read-Host -Prompt "Use IIS as reverse proxy? (y/n) [y]"; $USE_IIS = ($USE_IIS -ne 'n')
+    }
+}
+
+Write-Host "`n📊 Setting up MySQL..." -ForegroundColor Green
+mysql -u root -e "CREATE DATABASE IF NOT EXISTS $DB_NAME;"
+mysql -u root -e "CREATE USER IF NOT EXISTS '$DB_USER'@'localhost' IDENTIFIED BY '$DB_PASSWORD';"
+mysql -u root -e "GRANT ALL PRIVILEGES ON $DB_NAME.* TO '$DB_USER'@'localhost'; FLUSH PRIVILEGES;"
+
+$PROJECT_DIR = "C:\SysWatch"
+Write-Host "📁 Installing to $PROJECT_DIR..." -ForegroundColor Green
+if (Test-Path $PROJECT_DIR) { Remove-Item $PROJECT_DIR -Recurse -Force }
+New-Item -ItemType Directory -Path $PROJECT_DIR -Force | Out-Null
+Copy-Item -Path ".\*" -Destination $PROJECT_DIR -Recurse -Force
+Set-Location $PROJECT_DIR
+
+Write-Host "🐍 Setting up Python..." -ForegroundColor Green
+python -m venv venv
+& .\venv\Scripts\Activate.ps1
+pip install --upgrade pip
+pip install -r requirements.txt
+
+$API_KEY = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes([System.Guid]::NewGuid().ToString()))
+$SECRET_KEY = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes([System.Guid]::NewGuid().ToString()))
+@"
+SECRET_KEY=$SECRET_KEY
+DB_HOST=127.0.0.1
+DB_USER=$DB_USER
+DB_PASSWORD=$DB_PASSWORD
+DB_NAME=$DB_NAME
+API_KEY=$API_KEY
+ADMIN_USER=admin
+ADMIN_PASSWORD=$ADMIN_PASS
+SMTP_SERVER=$SMTP_SERVER
+SMTP_PORT=$SMTP_PORT
+SMTP_USER=$SMTP_USER
+SMTP_PASSWORD=$SMTP_PASSWORD
+ALERT_EMAIL_TO=$ALERT_EMAIL_TO
+TEAMS_WEBHOOK_URL=$TEAMS_WEBHOOK
+DISCOVERY_SUBNET=$DISCOVERY_SUBNET
+DEEPSEEK_API_KEY=$DEEPSEEK_API_KEY
+DEEPSEEK_API_URL=https://api.deepseek.com/v1/chat/completions
+DEEPSEEK_MODEL=deepseek-chat
+GEMINI_API_KEY=$GEMINI_API_KEY
+GEMINI_API_URL=https://generativelanguage.googleapis.com/v1beta/models/gemini-pro:generateContent
+SSH_USER=$SSH_USER
+SSH_PRIVATE_KEY_PATH=$SSH_KEY_PATH
+SSH_TIMEOUT=10
+WINRM_USER=$WINRM_USER
+WINRM_PASSWORD=$WINRM_PASSWORD
+WINRM_USE_SSL=true
+WINRM_USE_KERBEROS=false
+LDAP_SERVER=$LDAP_SERVER
+LDAP_BASE_DN=$LDAP_BASE_DN
+LDAP_USER_DN=$LDAP_USER_DN
+LDAP_GROUP_DN=
+LDAP_BIND_USER=$LDAP_BIND_USER
+LDAP_BIND_PASSWORD=$LDAP_BIND_PASSWORD
+LDAP_ROLE_MAPPING=$LDAP_ROLE_MAPPING
+"@ | Out-File -FilePath .\.env -Encoding UTF8
+
+Write-Host "🗄️  Initializing database..." -ForegroundColor Green
+python -c "from core.app import app; from core.database import init_db; with app.app_context(): init_db()"
+
+if ($USE_IIS) {
+    Write-Host "🌐 Configuring IIS reverse proxy..." -ForegroundColor Green
+    $sitePath = "$PROJECT_DIR\wwwroot"
+    New-Item -ItemType Directory -Path $sitePath -Force | Out-Null
+    @"
+<?xml version="1.0" encoding="UTF-8"?>
+<configuration>
+  <system.webServer>
+    <rewrite>
+      <rules>
+        <rule name="ReverseProxy" stopProcessing="true">
+          <match url="(.*)" />
+          <action type="Rewrite" url="http://127.0.0.1:5000/{R:1}" />
+        </rule>
+      </rules>
+    </rewrite>
+  </system.webServer>
+</configuration>
+"@ | Out-File -FilePath "$sitePath\web.config" -Encoding UTF8
+    if (-not (Get-WebSite -Name "SysWatch" -ErrorAction SilentlyContinue)) {
+        New-WebSite -Name "SysWatch" -PhysicalPath $sitePath -Port 80
+    }
+    Start-WebSite -Name "SysWatch"
+    Write-Host "✅ IIS reverse proxy configured on port 80."
+} else {
+    Write-Host "🌐 Installing Nginx as reverse proxy..." -ForegroundColor Green
+    Ensure-Chocolatey
+    choco install nginx -y
+    $nginxConf = @"
+server {
+    listen 80;
+    server_name localhost;
+    location / {
+        proxy_pass http://127.0.0.1:5000;
+        proxy_set_header Host `$host;
+        proxy_set_header X-Real-IP `$remote_addr;
+    }
+}
+"@
+    $confPath = "$env:ProgramData\nginx\conf\conf.d\syswatch.conf"
+    New-Item -ItemType Directory -Path (Split-Path $confPath) -Force | Out-Null
+    $nginxConf | Out-File -FilePath $confPath -Encoding UTF8
+    & "$env:ProgramFiles\nginx\nginx.exe" -s reload
+    Write-Host "✅ Nginx reverse proxy configured on port 80."
+}
+
+Write-Host "⏰ Creating Scheduled Task..." -ForegroundColor Green
+$gunicorn = "$PROJECT_DIR\venv\Scripts\gunicorn.exe"
+$action = New-ScheduledTaskAction -Execute $gunicorn -Argument "--workers 2 --bind 127.0.0.1:5000 wsgi:app" -WorkingDirectory $PROJECT_DIR
+$trigger = New-ScheduledTaskTrigger -AtStartup
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
+Register-ScheduledTask -TaskName "SysWatch" -Action $action -Trigger $trigger -Settings $settings -User $env:USERNAME -RunLevel Highest -Force
+Start-ScheduledTask -TaskName "SysWatch"
+
+New-NetFirewallRule -DisplayName "SysWatch Web" -Direction Inbound -LocalPort 80,443 -Protocol TCP -Action Allow -ErrorAction SilentlyContinue
+
+Write-Host "`n========================================" -ForegroundColor Cyan
+Write-Host "✅ SysWatch v1.2.0 installed!" -ForegroundColor Green
+Write-Host "========================================" -ForegroundColor Cyan
+$ip = (Invoke-WebRequest -Uri "https://api.ipify.org" -UseBasicParsing).Content
+Write-Host "Access URL: http://$($ip) (or localhost)"
+Write-Host "Username: admin"
+Write-Host "Password: $ADMIN_PASS"
+Write-Host "API Key: $API_KEY"
+Write-Host "`nManage with Task Scheduler (Task: SysWatch)."
+INSTALL_PS1_END
+
+# ----------------------------------------------------------------------
+# 15. FINALIZE
+# ----------------------------------------------------------------------
+echo ""
+echo "========================================"
+echo "✅ SysWatch v1.2.0 project generated!"
+echo "  Directory: $TARGET_DIR"
+echo "  To install on Linux: cd $TARGET_DIR && sudo bash install.sh"
+echo "  To install on Windows: cd $TARGET_DIR && powershell -ExecutionPolicy Bypass -File install.ps1"
+echo "========================================"
